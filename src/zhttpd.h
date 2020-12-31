@@ -55,5 +55,8 @@ void post_request_cb(evhtp_request_t *req, void *arg);
 void get_request_cb(evhtp_request_t *req, void *arg);
 void admin_request_cb(evhtp_request_t *req, void *arg);
 void info_request_cb(evhtp_request_t *req, void *arg);
+const char *get_filename_ext(const char *filename);
+const char *get_filename(const char *buff);
+const void setContentType(const char *filename_ext, evhtp_request_t *req);
 
 #endif

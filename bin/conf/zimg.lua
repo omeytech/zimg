@@ -29,7 +29,7 @@ etag            = 1
 --下载接口的IP控制权限
 --download_rule = 'allow all'
 --管理接口的IP控制权限
-admin_rule      = 'allow 127.0.0.1'
+admin_rule      = 'allow 10.20.12.1'
 
 --cache config
 --是否启用memcached缓存
@@ -92,7 +92,7 @@ save_new        = 1
 --上传图片大小限制，默认100MB
 max_size        = 100*1024*1024
 --允许上传图片类型列表
-allowed_type    = {'jpeg', 'jpg', 'png', 'gif', 'webp'}
+allowed_type    = {'jpeg', 'jpg', 'png', 'gif', 'webp', 'txt', 'rar', 'zip', 'torrent'}
 
 --mode[1]: local disk mode
 --本地存储时的存储路径

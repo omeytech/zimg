@@ -39,6 +39,7 @@ typedef struct {
     int partno;
     int succno;
     int check_name;
+    char file_type[32];
 } mp_arg_t;
 
 int zimg_etag_set(evhtp_request_t *request, char *buff, size_t len);
@@ -54,6 +55,9 @@ void post_request_cb(evhtp_request_t *req, void *arg);
 void get_request_cb(evhtp_request_t *req, void *arg);
 void admin_request_cb(evhtp_request_t *req, void *arg);
 void info_request_cb(evhtp_request_t *req, void *arg);
+const char *get_filename_ext(const char *filename);
+const char *get_filename(const char *buff);
+const void setContentType(const char *filename_ext, evhtp_request_t *req);
 
 static const char * post_error_list[] = {
     "Internal error.",
@@ -421,6 +425,7 @@ int on_header_value(multipart_parser* p, const char *at, size_t length) {
                     mp_arg->check_name = -1;
                 } else {
                     LOG_PRINT(LOG_DEBUG, "fileType[%s]", fileType);
+                    snprintf(mp_arg->file_type, 32, fileType);
                     if (is_img(fileType) != 1) {
                         LOG_PRINT(LOG_DEBUG, "fileType[%s] is Not Supported!", fileType);
                         mp_arg->check_name = -1;
@@ -465,13 +470,8 @@ int on_chunk_data(multipart_parser* p, const char *at, size_t length) {
                            );
     } else {
         mp_arg->succno++;
-        LOG_PRINT(LOG_INFO, "%s succ post pic:%s size:%d", mp_arg->address, md5sum, length);
-        evbuffer_add_printf(mp_arg->req->buffer_out,
-                            "<h1>MD5: %s</h1>\n"
-                            "Image upload successfully! You can get this image via this address:<br/><br/>\n"
-                            "<a href=\"/%s\">http://yourhostname:%d/%s</a>?w=width&h=height&g=isgray&x=position_x&y=position_y&r=rotate&q=quality&f=format\n",
-                            md5sum, md5sum, settings.port, md5sum
-                           );
+        LOG_PRINT(LOG_INFO, "%s succ post pic:%s.%s size:%d", mp_arg->address, md5sum, mp_arg->file_type, length);
+        evbuffer_add_printf(mp_arg->req->buffer_out, "{\"ret\":true,\"info\":{\"md5\":\"%s.%s\",\"size\":%d}}", md5sum, mp_arg->file_type, length);
     }
     return 0;
 }
@@ -534,13 +534,6 @@ int multipart_parse(evhtp_request_t *req, const char *content_type, const char *
     char *boundaryPattern = NULL;
     int boundary_len = 0;
     mp_arg_t *mp_arg = NULL;
-
-    evbuffer_add_printf(req->buffer_out,
-                        "<html>\n<head>\n"
-                        "<title>Upload Result</title>\n"
-                        "</head>\n"
-                        "<body>\n"
-                       );
 
     if (strstr(content_type, "boundary") == 0) {
         LOG_PRINT(LOG_DEBUG, "boundary NOT found!");
@@ -609,11 +602,6 @@ int multipart_parse(evhtp_request_t *req, const char *content_type, const char *
     multipart_parser_execute(parser, buff, post_size);
     multipart_parser_free(parser);
 
-    if (mp_arg->succno == 0) {
-        evbuffer_add_printf(req->buffer_out, "<h1>Upload Failed!</h1>\n");
-    }
-
-    evbuffer_add_printf(req->buffer_out, "</body>\n</html>\n");
     evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "text/html", 0, 0));
     err_no = -1;
 
@@ -815,7 +803,7 @@ void get_request_cb(evhtp_request_t *req, void *arg) {
         }
     }
 
-    const char *uri;
+    const char *uri, *filename_ext = NULL, *filename;
     uri = req->uri->path->full;
 
     if (strlen(uri) == 1 && uri[0] == '/') {
@@ -853,7 +841,11 @@ void get_request_cb(evhtp_request_t *req, void *arg) {
         goto done;
     }
     LOG_PRINT(LOG_DEBUG, "Got a GET request for <%s>",  uri);
-
+    if (strstr(uri, ".") != NULL) {
+		filename_ext = get_filename_ext(uri);
+		filename = get_filename(uri);
+		uri = filename;
+    }
     /* Don't allow any ".."s in the path, to avoid exposing stuff outside
      * of the docroot.  This test is both overzealous and underzealous:
      * it forbids aceptable paths like "/this/one..here", but it doesn't
@@ -1000,7 +992,13 @@ void get_request_cb(evhtp_request_t *req, void *arg) {
 
     LOG_PRINT(LOG_DEBUG, "Got the File!");
     evhtp_headers_add_header(req->headers_out, evhtp_header_new("Server", settings.server_name, 0, 1));
-    evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "image/jpeg", 0, 0));
+
+    if (filename_ext != NULL) {
+        setContentType(filename_ext, req);
+	} else {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "image/jpeg", 0, 0));
+	}
+
     zimg_headers_add(req, settings.headers);
     evhtp_send_reply(req, EVHTP_RES_OK);
     if (type)
@@ -1286,4 +1284,43 @@ err:
 
 done:
     return;
+}
+
+const char *get_filename_ext(const char *filename) {
+	const char *dot = strrchr(filename, '.');
+	if (!dot || dot == filename)
+		return NULL;
+	return dot + 1;
+}
+
+const char *get_filename(const char *filename) {
+	const char *dot = strrchr(filename, '.');
+	int length = dot - filename;
+	char *subbuff = malloc(length * sizeof(char));
+
+	memcpy(subbuff, &filename[0], length);
+	subbuff[length] = '\0';
+	return subbuff;
+}
+
+const void setContentType(const char *filename_ext, evhtp_request_t *req) {
+	if(strcmp("jpeg", filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "image/jpeg", 0, 0));
+	} else if(strcmp("jpg",  filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "image/jpeg", 0, 0));
+	} else if(strcmp("png",  filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "image/png", 0, 0));
+	} else if(strcmp("gif",  filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "image/gif", 0, 0));
+	} else if(strcmp("webp", filename_ext) == 0) {
+
+	} else if(strcmp("txt",  filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "text/plain", 0, 0));
+	} else if(strcmp("rar",   filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "application/x-rar-compressed", 0, 0));
+	} else if(strcmp("zip",   filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "application/zip", 0, 0));
+	} else if(strcmp("torrent",   filename_ext) == 0) {
+		evhtp_headers_add_header(req->headers_out, evhtp_header_new("Content-Type", "application/octet-stream", 0, 0));
+	}
 }
